@@ -5,7 +5,55 @@ import os.path
 import sys
 import math
 
-def tecplot_to_vtk_camera(psi_angle, theta_angle, viewer_position, view_width, center_of_rotation=None):
+def calculate_data_center(input_file):
+    """
+    Calculate the center of the data from a Tecplot .dat file.
+    
+    Parameters:
+    -----------
+    input_file : str
+        Path to the Tecplot .dat file
+        
+    Returns:
+    --------
+    tuple
+        (X, Y, Z) coordinates of the center of the data
+    """
+    # Create a VTK Tecplot reader
+    reader = vtk.vtkTecplotReader()
+    reader.SetFileName(input_file)
+    reader.Update()
+    
+    # Get the bounds of the entire dataset
+    multiblock_data = reader.GetOutput()
+    bounds = [0, 0, 0, 0, 0, 0]  # Initialize [xmin, xmax, ymin, ymax, zmin, zmax]
+    
+    # Process each block to find overall bounds
+    for i in range(multiblock_data.GetNumberOfBlocks()):
+        block = multiblock_data.GetBlock(i)
+        if block is None:
+            continue
+        
+        block_bounds = list(block.GetBounds())  # Convert tuple to list
+        # Update min/max for each dimension
+        if i == 0:
+            bounds = block_bounds.copy()  # Make a copy of the list
+        else:
+            bounds[0] = min(bounds[0], block_bounds[0])  # xmin
+            bounds[1] = max(bounds[1], block_bounds[1])  # xmax
+            bounds[2] = min(bounds[2], block_bounds[2])  # ymin
+            bounds[3] = max(bounds[3], block_bounds[3])  # ymax
+            bounds[4] = min(bounds[4], block_bounds[4])  # zmin
+            bounds[5] = max(bounds[5], block_bounds[5])  # zmax
+    
+    # Calculate center coordinates
+    center_x = (bounds[0] + bounds[1]) / 2.0
+    center_y = (bounds[2] + bounds[3]) / 2.0
+    center_z = (bounds[4] + bounds[5]) / 2.0
+    
+    return (center_x, center_y, center_z)
+
+def tecplot_to_vtk_camera(psi_angle, theta_angle, viewer_position, view_width, input_file):
     """
     Convert Tecplot 360 camera parameters to VTK camera parameters.
     
@@ -19,9 +67,9 @@ def tecplot_to_vtk_camera(psi_angle, theta_angle, viewer_position, view_width, c
         (X, Y, Z) coordinates of the camera position.
     view_width : float
         Width of the viewing window.
-    center_of_rotation : tuple or list, optional
-        (X, Y, Z) coordinates of the center of rotation (focus point).
-        If None, assumes (0, 0, 0).
+    input_file : str
+        Path to the Tecplot .dat file, used to calculate center of
+        rotation.
         
     Returns:
     --------
@@ -32,9 +80,14 @@ def tecplot_to_vtk_camera(psi_angle, theta_angle, viewer_position, view_width, c
         - view_up: camera up vector (x, y, z)
         - view_angle: camera view angle in degrees
     """
-    # Default center of rotation (focal point) is (0, 0, 0) if not specified
-    if center_of_rotation is None:
+    # Determine center of rotation (focal point)
+    if input_file is not None:
+        print("Calculating center from data...")
+        center_of_rotation = calculate_data_center(input_file)
+        print(f"Calculated center of rotation: {center_of_rotation}")
+    else:
         center_of_rotation = (0.0, 0.0, 0.0)
+        print("Using default center of rotation: (0, 0, 0)")
     
     # Convert angles from degrees to radians
     psi_rad = math.radians(psi_angle)
@@ -110,7 +163,6 @@ def parse_tecplot_layout(filename):
         'theta_angle': None,
         'viewer_position': None,
         'view_width': None,
-        'center_of_rotation': None
     }
     
     try:
@@ -118,98 +170,68 @@ def parse_tecplot_layout(filename):
             in_threedview = False
             in_viewer_position = False
             in_center_rotation = False
+            in_rotate_origin = False
             
             for line in f:
                 line = line.strip()
                 
+                # Check for THREEDVIEW section
                 if line.startswith('$!THREEDVIEW'):
                     in_threedview = True
                     continue
-                    
-                if not in_threedview:
-                    continue
-                    
-                if line.startswith('PSIANGLE'):
-                    parts = line.split('=')
-                    if len(parts) > 1:
-                        params['psi_angle'] = float(parts[1].strip())
-                        
-                elif line.startswith('THETAANGLE'):
-                    parts = line.split('=')
-                    if len(parts) > 1:
-                        params['theta_angle'] = float(parts[1].strip())
-                        
-                elif line.startswith('VIEWERPOSITION'):
-                    in_viewer_position = True
-                    continue
-                    
-                elif in_viewer_position and line.startswith('X'):
-                    parts = line.split('=')
-                    if len(parts) > 1:
-                        x = float(parts[1].strip())
-                        if params['viewer_position'] is None:
-                            params['viewer_position'] = [0, 0, 0]
-                        params['viewer_position'][0] = x
-                        
-                elif in_viewer_position and line.startswith('Y'):
-                    parts = line.split('=')
-                    if len(parts) > 1:
-                        y = float(parts[1].strip())
-                        if params['viewer_position'] is None:
-                            params['viewer_position'] = [0, 0, 0]
-                        params['viewer_position'][1] = y
-                        
-                elif in_viewer_position and line.startswith('Z'):
-                    parts = line.split('=')
-                    if len(parts) > 1:
-                        z = float(parts[1].strip())
-                        if params['viewer_position'] is None:
-                            params['viewer_position'] = [0, 0, 0]
-                        params['viewer_position'][2] = z
-                        
-                elif line.startswith('}') and in_viewer_position:
-                    in_viewer_position = False
-                    
-                elif line.startswith('CENTEROFROTATION'):
-                    in_center_rotation = True
-                    continue
-                    
-                elif in_center_rotation and line.startswith('X'):
-                    parts = line.split('=')
-                    if len(parts) > 1:
-                        x = float(parts[1].strip())
-                        if params['center_of_rotation'] is None:
-                            params['center_of_rotation'] = [0, 0, 0]
-                        params['center_of_rotation'][0] = x
-                        
-                elif in_center_rotation and line.startswith('Y'):
-                    parts = line.split('=')
-                    if len(parts) > 1:
-                        y = float(parts[1].strip())
-                        if params['center_of_rotation'] is None:
-                            params['center_of_rotation'] = [0, 0, 0]
-                        params['center_of_rotation'][1] = y
-                        
-                elif in_center_rotation and line.startswith('Z'):
-                    parts = line.split('=')
-                    if len(parts) > 1:
-                        z = float(parts[1].strip())
-                        if params['center_of_rotation'] is None:
-                            params['center_of_rotation'] = [0, 0, 0]
-                        params['center_of_rotation'][2] = z
-                        
-                elif line.startswith('}') and in_center_rotation:
-                    in_center_rotation = False
                 
-                elif line.startswith('VIEWWIDTH'):
-                    parts = line.split('=')
-                    if len(parts) > 1:
-                        params['view_width'] = float(parts[1].strip())
+                # Process THREEDVIEW section
+                if in_threedview:
+                    if line.startswith('PSIANGLE'):
+                        parts = line.split('=')
+                        if len(parts) > 1:
+                            params['psi_angle'] = float(parts[1].strip())
+                            
+                    elif line.startswith('THETAANGLE'):
+                        parts = line.split('=')
+                        if len(parts) > 1:
+                            params['theta_angle'] = float(parts[1].strip())
+                            
+                    elif line.startswith('VIEWERPOSITION'):
+                        in_viewer_position = True
+                        continue
                         
-                # If there's a blank line or we reach a new section, exit the THREEDVIEW section
-                elif line.startswith('$!') and not line.startswith('$!THREEDVIEW'):
-                    in_threedview = False
+                    elif in_viewer_position and line.startswith('X'):
+                        parts = line.split('=')
+                        if len(parts) > 1:
+                            x = float(parts[1].strip())
+                            if params['viewer_position'] is None:
+                                params['viewer_position'] = [0, 0, 0]
+                            params['viewer_position'][0] = x
+                            
+                    elif in_viewer_position and line.startswith('Y'):
+                        parts = line.split('=')
+                        if len(parts) > 1:
+                            y = float(parts[1].strip())
+                            if params['viewer_position'] is None:
+                                params['viewer_position'] = [0, 0, 0]
+                            params['viewer_position'][1] = y
+                            
+                    elif in_viewer_position and line.startswith('Z'):
+                        parts = line.split('=')
+                        if len(parts) > 1:
+                            z = float(parts[1].strip())
+                            if params['viewer_position'] is None:
+                                params['viewer_position'] = [0, 0, 0]
+                            params['viewer_position'][2] = z
+                            
+                    elif line.startswith('}') and in_viewer_position:
+                        in_viewer_position = False
                     
+                    elif line.startswith('VIEWWIDTH'):
+                        parts = line.split('=')
+                        if len(parts) > 1:
+                            params['view_width'] = float(parts[1].strip())
+                            
+                    # If there's a blank line or we reach a new section, exit the THREEDVIEW section
+                    elif line.startswith('$!') and not line.startswith('$!THREEDVIEW'):
+                        in_threedview = False
+                            
         if params['psi_angle'] is None or params['theta_angle'] is None or params['viewer_position'] is None or params['view_width'] is None:
             print("Warning: Some camera parameters were not found in the layout file.")
             
@@ -247,9 +269,9 @@ def process_tecplot_file(input_file, layout_file):
         tecplot_params['theta_angle'],
         tecplot_params['viewer_position'],
         tecplot_params['view_width'],
-        tecplot_params['center_of_rotation']
+        input_file  # Pass the input file for center calculation if needed
     )
-    print("Camera parameters found in layout file:")
+    print("Camera parameters:")
     print(f"  Position: {camera_params['position']}")
     print(f"  Focal Point: {camera_params['focal_point']}")
     print(f"  View Up: {camera_params['view_up']}")
