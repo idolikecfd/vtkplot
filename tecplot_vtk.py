@@ -370,36 +370,44 @@ def process_tecplot_file(input_file, layout_file):
     reader.SetFileName(input_file)
     reader.Update()
 
-    # Initialize actors list
-    actors = []
+    # Initialize actors list for active and inactive blocks
+    active_actors = []
+    inactive_actors = []
 
     # Get the multi-block output
     multiblock_data = reader.GetOutput()
     print(f"Data type: {multiblock_data.GetClassName()}")
     print(f"Number of blocks: {multiblock_data.GetNumberOfBlocks()}")
 
+    # Create a lookup table for color mapping (will be used for both active and inactive blocks)
+    lut = vtk.vtkLookupTable()
+    lut.SetNumberOfColors(256)
+    lut.SetHueRange(0.667, 0.0)  # Reverse the hue range (red for high values, blue for low)
+    lut.SetSaturationRange(1.0, 1.0)
+    lut.SetValueRange(1.0, 1.0)
+    lut.Build()
+    
     # 2. Process each block in the multi-block dataset
     for i in range(multiblock_data.GetNumberOfBlocks()):
-        # Skip this block if it's not in the active field maps
-        if (tecplot_params.get('active_fieldmaps') is not None and 
-            (i + 1) not in tecplot_params.get('active_fieldmaps')):
-            print(f"Block {i+1} is not active, skipping")
-            continue
-            
         block = multiblock_data.GetBlock(i)
         if block is None:
             print(f"Block {i+1} is None, skipping")
             continue
         
-        print(f"Processing active block {i+1}, type: {block.GetClassName()}")
+        # Check if the block is active
+        is_active = (tecplot_params.get('active_fieldmaps') is None or 
+                    (i + 1) in tecplot_params.get('active_fieldmaps'))
+        
+        if is_active:
+            print(f"Processing active block {i+1}, type: {block.GetClassName()}")
+        else:
+            print(f"Processing inactive block {i+1}, type: {block.GetClassName()}")
         
         # Apply contour settings from the Tecplot file
-        # In Tecplot we have variable 5 (u) set for contour
         contour = vtk.vtkContourFilter()
         contour.SetInputData(block)
         
         # Set up contour values based on Tecplot levels
-        # These match the raw data values in the Tecplot layout
         contour_values = [
             0.335123736549, 0.344903259539, 0.35468278253, 0.364462305521,
             0.374241828511, 0.384021351502, 0.393800874493, 0.403580397483,
@@ -408,8 +416,7 @@ def process_tecplot_file(input_file, layout_file):
             0.491596104399, 0.50137562739, 0.51115515038
         ]
         
-        # In Tecplot, VAR = 5 corresponds to 'u' velocity
-        # In VTK, array indices start at 0, so we need index 4
+        # Set contour array
         contour.SetInputArrayToProcess(0, 0, 0, vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS, "u")
         
         for value in contour_values:
@@ -421,23 +428,11 @@ def process_tecplot_file(input_file, layout_file):
         contour_mapper = vtk.vtkPolyDataMapper()
         contour_mapper.SetInputConnection(contour.GetOutputPort())
         contour_mapper.SetScalarRange(0.325344213558, 0.520934673371)  # From CMIN/CMAX in Tecplot layout
-        
-        # Create a lookup table to match Tecplot's coloring as seen in reference image
-        lut = vtk.vtkLookupTable()
-        # Based on the reference image, we need a color map that goes from 
-        # blue -> cyan -> green -> yellow -> orange -> red
-        lut.SetNumberOfColors(256)
-        # Reverse the hue range to match the Tecplot colors (red for high values, blue for low)
-        lut.SetHueRange(0.667, 0.0)  
-        lut.SetSaturationRange(1.0, 1.0)
-        lut.SetValueRange(1.0, 1.0)
-        lut.Build()
         contour_mapper.SetLookupTable(lut)
         
         # Create a contour actor
         contour_actor = vtk.vtkActor()
         contour_actor.SetMapper(contour_mapper)
-        actors.append(contour_actor)
         
         # Create a mapper for the original dataset (for mesh edges)
         mapper = vtk.vtkDataSetMapper()
@@ -446,54 +441,60 @@ def process_tecplot_file(input_file, layout_file):
         # Create an actor for edges only
         edge_actor = vtk.vtkActor()
         edge_actor.SetMapper(mapper)
-        
-        # Set edge properties according to the Tecplot file
-        # EDGELAYER SHOW = YES, COLOR = BLACK, LINETHICKNESS = 0.1
         edge_actor.GetProperty().SetRepresentationToWireframe()
         edge_actor.GetProperty().SetColor(0, 0, 0)  # Black
         edge_actor.GetProperty().SetLineWidth(0.1)
-        actors.append(edge_actor)
-        
-        # Configure surface properties from the Tecplot file
-        # Set lighting effects to Gouraud
-        contour_actor.GetProperty().SetInterpolationToGouraud()
         
         # Create surface mapper for flood contour
         surface_mapper = vtk.vtkDataSetMapper()
         surface_mapper.SetInputData(block)
-        surface_mapper.SetScalarRange(0.325344213558, 0.520934673371)  # Same as contour range
+        surface_mapper.SetScalarRange(0.325344213558, 0.520934673371)
         surface_mapper.SetScalarModeToUsePointFieldData()
-        surface_mapper.SelectColorArray("u")  # Variable 5 - 'u' velocity
+        surface_mapper.SelectColorArray("u")
         surface_mapper.SetLookupTable(lut)
         
         # Create surface actor
         surface_actor = vtk.vtkActor()
         surface_actor.SetMapper(surface_mapper)
-        surface_actor.GetProperty().SetInterpolationToGouraud()  # LIGHTINGEFFECT = GOURAUD
-        actors.append(surface_actor)
+        surface_actor.GetProperty().SetInterpolationToGouraud()
+        
+        # Add actors to the appropriate list
+        if is_active:
+            active_actors.extend([contour_actor, edge_actor, surface_actor])
+        else:
+            inactive_actors.extend([contour_actor, edge_actor, surface_actor])
 
-    # 3. Set up the renderer and add all actors
+    # 3. Set up the renderer and render window
     renderer = vtk.vtkRenderer()
-    for actor in actors:
-        renderer.AddActor(actor)
-    renderer.SetBackground(0.6, 0.3, 0)  # Brown/orange background to match reference image
-
-    # 4. Set up the render window
     renderWindow = vtk.vtkRenderWindow()
     renderWindow.AddRenderer(renderer)
-    renderWindow.SetSize(800, 800)  # Matching the layout's WIDTH = 8, HEIGHT = 8 but in pixels
+    renderWindow.SetSize(800, 800)
 
-    # 5. Set up camera
-    camera = renderer.GetActiveCamera()
+    # 4. First add all ACTIVE actors
+    print(f"Adding {len(active_actors)} active actors to renderer")
+    for actor in active_actors:
+        renderer.AddActor(actor)
     
-    # Apply camera parameters from layout file
+    # 5. Set up the camera
+    camera = renderer.GetActiveCamera()
     apply_to_vtk_camera(camera, camera_params)
+    
+    # 6. Reset the camera to fit all ACTIVE actors
+    if active_actors:
+        print("Resetting camera to fit active actors")
+        renderer.ResetCamera()
+    
+    # 7. Now add all INACTIVE actors without resetting the camera
+    print(f"Adding {len(inactive_actors)} inactive actors to renderer (without resetting camera)")
+    for actor in inactive_actors:
+        renderer.AddActor(actor)
 
-    # 6. Set up the interactor
+    # Set background color
+    renderer.SetBackground(0.6, 0.3, 0)  # Brown/orange background
+
+    # 8. Set up the interactor
     renderWindowInteractor = vtk.vtkRenderWindowInteractor()
     renderWindowInteractor.SetRenderWindow(renderWindow)
-
-    # Add key bindings to toggle display modes
     style = vtk.vtkInteractorStyleTrackballCamera()
     renderWindowInteractor.SetInteractorStyle(style)
 
@@ -502,16 +503,14 @@ def process_tecplot_file(input_file, layout_file):
     scalar_bar.SetLookupTable(lut)
     scalar_bar.SetTitle("u velocity")
     scalar_bar.SetNumberOfLabels(10)
-    # Position the scalar bar similar to Tecplot's legend position
     scalar_bar.SetPosition(0.8, 0.1)
     scalar_bar.SetPosition2(0.15, 0.8)
     renderer.AddActor2D(scalar_bar)
 
-    # 7. Initialize the interactor and start rendering
+    # 9. Initialize the interactor
     renderWindowInteractor.Initialize()
-    renderer.ResetCamera()  # Make sure the camera shows all actors
 
-    # Add axis display to match the reference image (shows X, Y, Z axes in top right)
+    # Add axis display
     axes = vtk.vtkAxesActor()
     axes.SetTotalLength(30, 30, 30)
     axes.SetShaftTypeToLine()
