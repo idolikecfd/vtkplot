@@ -1,0 +1,14 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug Python with venv",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "tecplot_vtk.py",
+            "console": "integratedTerminal",
+            "args": "om6.dat om6.lay mesh_refinement",
+            "python": "${workspaceFolder}/venv/bin/python"
+        }
+    ]
+}
