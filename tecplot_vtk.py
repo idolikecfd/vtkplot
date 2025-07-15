@@ -99,6 +99,22 @@ def tecplot_to_vtk_camera(psi_angle, theta_angle, viewer_position, view_width, i
     # The focal point is the center of rotation
     focal_point = center_of_rotation
     
+    # Calculate camera direction vector (from position to focal point)
+    direction = [
+        focal_point[0] - position[0],
+        focal_point[1] - position[1],
+        focal_point[2] - position[2]
+    ]
+    direction_magnitude = math.sqrt(direction[0]**2 + direction[1]**2 + direction[2]**2)
+    
+    # Normalize direction vector
+    if direction_magnitude > 0:
+        direction = [
+            direction[0]/direction_magnitude,
+            direction[1]/direction_magnitude,
+            direction[2]/direction_magnitude
+        ]
+    
     # Calculate view up vector based on Tecplot's angle conventions
     # In Tecplot, psi is elevation and theta is azimuth
     # The view up vector points in the direction of the "up" on the screen
@@ -106,7 +122,22 @@ def tecplot_to_vtk_camera(psi_angle, theta_angle, viewer_position, view_width, i
     view_up_x = -math.sin(theta_rad) * math.sin(psi_rad)
     view_up_y = -math.cos(theta_rad) * math.sin(psi_rad)
     view_up_z = math.cos(psi_rad)
-    view_up = (view_up_x, view_up_y, view_up_z)
+    view_up = [view_up_x, view_up_y, view_up_z]
+    
+    # Check if view_up and direction are too parallel
+    # Calculate dot product
+    dot_product = view_up[0]*direction[0] + view_up[1]*direction[1] + view_up[2]*direction[2]
+    
+    # If they're nearly parallel (dot product close to 1 or -1), adjust view_up
+    if abs(abs(dot_product) - 1.0) < 0.01:
+        print("Warning: View-up vector nearly parallel to camera direction. Adjusting...")
+        # Choose a different view_up vector
+        # If direction is mostly along Z, use Y as view_up
+        if abs(direction[2]) > 0.9:
+            view_up = [0, 1, 0]
+        # Otherwise use Z as view_up
+        else:
+            view_up = [0, 0, 1]
     
     # Convert view width to view angle
     # In VTK, the view angle is the vertical field of view in degrees
