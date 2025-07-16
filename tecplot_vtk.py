@@ -5,7 +5,40 @@ import os.path
 import sys
 import math
 
-def calculate_data_center(input_file):
+def parse_active_fieldmaps(fieldmaps_str):
+    """
+    Parse a Tecplot active field maps string into a list of block indices.
+    
+    Parameters:
+    -----------
+    fieldmaps_str : str
+        String containing the active field maps specification, e.g., "[1,3-5,7]"
+        
+    Returns:
+    --------
+    list
+        List of integer indices of active field maps (1-based)
+    """
+    # Remove brackets and spaces
+    cleaned_str = fieldmaps_str.strip('[]').replace(' ', '')
+    
+    # Split by commas
+    parts = cleaned_str.split(',')
+    
+    active_maps = []
+    for part in parts:
+        if '-' in part:
+            # This is a range
+            start, end = map(int, part.split('-'))
+            active_maps.extend(range(start, end + 1))
+        else:
+            # This is a single number
+            if part:  # Skip empty strings
+                active_maps.append(int(part))
+    
+    return active_maps
+
+def calculate_data_center(input_file, active_fieldmaps=None):
     """
     Calculate the center of the data from a Tecplot .dat file.
     
@@ -13,6 +46,9 @@ def calculate_data_center(input_file):
     -----------
     input_file : str
         Path to the Tecplot .dat file
+    active_fieldmaps : list, optional
+        List of active field maps (1-based indices). If provided, only these blocks
+        will be considered for the center calculation.
         
     Returns:
     --------
@@ -29,15 +65,22 @@ def calculate_data_center(input_file):
     bounds = [0, 0, 0, 0, 0, 0]  # Initialize [xmin, xmax, ymin, ymax, zmin, zmax]
     
     # Process each block to find overall bounds
+    is_first_active_block = True
+    
     for i in range(multiblock_data.GetNumberOfBlocks()):
+        # Skip this block if it's not in the active field maps
+        if active_fieldmaps is not None and (i + 1) not in active_fieldmaps:
+            continue
+            
         block = multiblock_data.GetBlock(i)
         if block is None:
             continue
         
         block_bounds = list(block.GetBounds())  # Convert tuple to list
         # Update min/max for each dimension
-        if i == 0:
+        if is_first_active_block:
             bounds = block_bounds.copy()  # Make a copy of the list
+            is_first_active_block = False
         else:
             bounds[0] = min(bounds[0], block_bounds[0])  # xmin
             bounds[1] = max(bounds[1], block_bounds[1])  # xmax
@@ -53,7 +96,7 @@ def calculate_data_center(input_file):
     
     return (center_x, center_y, center_z)
 
-def tecplot_to_vtk_camera(psi_angle, theta_angle, viewer_position, view_width, input_file):
+def tecplot_to_vtk_camera(psi_angle, theta_angle, viewer_position, view_width, input_file, active_fieldmaps=None):
     """
     Convert Tecplot 360 camera parameters to VTK camera parameters.
     
@@ -70,6 +113,9 @@ def tecplot_to_vtk_camera(psi_angle, theta_angle, viewer_position, view_width, i
     input_file : str
         Path to the Tecplot .dat file, used to calculate center of
         rotation.
+    active_fieldmaps : list, optional
+        List of active field maps (1-based indices). If provided, only these blocks
+        will be considered for the center calculation.
         
     Returns:
     --------
@@ -83,7 +129,9 @@ def tecplot_to_vtk_camera(psi_angle, theta_angle, viewer_position, view_width, i
     # Determine center of rotation (focal point)
     if input_file is not None:
         print("Calculating center from data...")
-        center_of_rotation = calculate_data_center(input_file)
+        if active_fieldmaps:
+            print(f"Using active field maps: {active_fieldmaps}")
+        center_of_rotation = calculate_data_center(input_file, active_fieldmaps)
         print(f"Calculated center of rotation: {center_of_rotation}")
     else:
         center_of_rotation = (0.0, 0.0, 0.0)
@@ -194,6 +242,7 @@ def parse_tecplot_layout(filename):
         'theta_angle': None,
         'viewer_position': None,
         'view_width': None,
+        'active_fieldmaps': None,  # New parameter
     }
     
     try:
@@ -205,6 +254,14 @@ def parse_tecplot_layout(filename):
             
             for line in f:
                 line = line.strip()
+                
+                # Check for ACTIVEFIELDMAPS
+                if line.startswith('$!ACTIVEFIELDMAPS'):
+                    parts = line.split('=')
+                    if len(parts) > 1:
+                        fieldmaps_str = parts[1].strip()
+                        params['active_fieldmaps'] = parse_active_fieldmaps(fieldmaps_str)
+                        print(f"Found active fieldmaps: {params['active_fieldmaps']}")
                 
                 # Check for THREEDVIEW section
                 if line.startswith('$!THREEDVIEW'):
@@ -287,7 +344,6 @@ def process_tecplot_file(input_file, layout_file):
     print(f"Using layout file: {layout_file}")
     
     # Parse layout file
-    camera_params = None
     print(f"Reading camera settings from layout file: {layout_file}")
     tecplot_params = parse_tecplot_layout(layout_file)
     if not tecplot_params:
@@ -300,7 +356,8 @@ def process_tecplot_file(input_file, layout_file):
         tecplot_params['theta_angle'],
         tecplot_params['viewer_position'],
         tecplot_params['view_width'],
-        input_file  # Pass the input file for center calculation if needed
+        input_file,  # Pass the input file for center calculation
+        tecplot_params.get('active_fieldmaps')  # Pass active fieldmaps
     )
     print("Camera parameters:")
     print(f"  Position: {camera_params['position']}")
@@ -323,12 +380,18 @@ def process_tecplot_file(input_file, layout_file):
 
     # 2. Process each block in the multi-block dataset
     for i in range(multiblock_data.GetNumberOfBlocks()):
+        # Skip this block if it's not in the active field maps
+        if (tecplot_params.get('active_fieldmaps') is not None and 
+            (i + 1) not in tecplot_params.get('active_fieldmaps')):
+            print(f"Block {i+1} is not active, skipping")
+            continue
+            
         block = multiblock_data.GetBlock(i)
         if block is None:
-            print(f"Block {i} is None, skipping")
+            print(f"Block {i+1} is None, skipping")
             continue
         
-        print(f"Block {i} type: {block.GetClassName()}")
+        print(f"Processing active block {i+1}, type: {block.GetClassName()}")
         
         # Apply contour settings from the Tecplot file
         # In Tecplot we have variable 5 (u) set for contour
