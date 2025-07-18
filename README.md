@@ -1,10 +1,10 @@
-# Tecplot-VTK Visualization with View Magnification
+# VTKPlot: A VTK equivalent of Tecplot 360 Visualization with View Magnification
 
 This package provides a VTK-based visualization tool for Tecplot data files with multiple "view magnification" methods that simulate Tecplot 360's automatic view focusing.
 
 ## Files
 
-- `tecplot_vtk_updated.py` - Main script for visualizing Tecplot data with VTK
+- `vtkplot.py` - Main script for visualizing Tecplot data with VTK
 - Magnification methods:
   - `statistical_magnification.py` - Uses percentile-based filtering to exclude outliers
   - `variability_magnification.py` - Focuses on regions with high gradient values
@@ -23,12 +23,12 @@ pip install numpy vtk
 
 Basic usage without magnification:
 ```bash
-python tecplot_vtk_updated.py input_file.dat layout_file.lay none
+python vtkplot.py input_file.dat layout_file.lay none
 ```
 
 Specify a magnification method as a subcommand:
 ```bash
-python tecplot_vtk_updated.py input_file.dat layout_file.lay statistical
+python vtkplot.py input_file.dat layout_file.lay statistical
 ```
 
 ### Magnification Methods
@@ -75,27 +75,27 @@ python tecplot_vtk_updated.py input_file.dat layout_file.lay statistical
 
 Statistical magnification with 3% outlier cutoff:
 ```bash
-python tecplot_vtk_updated.py input_file.dat layout_file.lay statistical --percentile-cutoff 0.03
+python vtkplot.py input_file.dat layout_file.lay statistical --percentile-cutoff 0.03
 ```
 
 Variability magnification focusing on top 5% of gradients:
 ```bash
-python tecplot_vtk_updated.py input_file.dat layout_file.lay variability --gradient-percentile 0.95
+python vtkplot.py input_file.dat layout_file.lay variability --gradient-percentile 0.95
 ```
 
 Field range magnification focusing on the middle 30% of values:
 ```bash
-python tecplot_vtk_updated.py input_file.dat layout_file.lay field_range --min-percentile 0.35 --max-percentile 0.65
+python vtkplot.py input_file.dat layout_file.lay field_range --min-percentile 0.35 --max-percentile 0.65
 ```
 
 Bounding box magnification with 10% padding:
 ```bash
-python tecplot_vtk_updated.py input_file.dat layout_file.lay bounding_box --padding-factor 0.10
+python vtkplot.py input_file.dat layout_file.lay bounding_box --padding-factor 0.10
 ```
 
 Mesh refinement magnification focusing on smallest 5% of cells:
 ```bash
-python tecplot_vtk_updated.py input_file.dat layout_file.lay mesh_refinement --percentile-threshold 0.05
+python vtkplot.py input_file.dat layout_file.lay mesh_refinement --percentile-threshold 0.05
 ```
 
 ## Notes on Tecplot View Magnification
