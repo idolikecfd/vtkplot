@@ -21,14 +21,21 @@ pip install numpy vtk
 
 ## Usage
 
+The script reads a Tecplot layout file (.lay) which contains camera settings and a reference to the data file (.dat).
+
 Basic usage without magnification:
 ```bash
-python vtkplot.py input_file.dat layout_file.lay none
+python vtkplot.py layout_file.lay none
 ```
 
 Specify a magnification method as a subcommand:
 ```bash
-python vtkplot.py input_file.dat layout_file.lay statistical
+python vtkplot.py layout_file.lay statistical
+```
+
+**Note:** The layout file should contain a reference to the data file in the format:
+```
+$!VarSet |LFDSFN1| = '"data_file.dat"'
 ```
 
 ### Magnification Methods
@@ -75,27 +82,27 @@ python vtkplot.py input_file.dat layout_file.lay statistical
 
 Statistical magnification with 3% outlier cutoff:
 ```bash
-python vtkplot.py input_file.dat layout_file.lay statistical --percentile-cutoff 0.03
+python vtkplot.py layout_file.lay statistical --percentile-cutoff 0.03
 ```
 
 Variability magnification focusing on top 5% of gradients:
 ```bash
-python vtkplot.py input_file.dat layout_file.lay variability --gradient-percentile 0.95
+python vtkplot.py layout_file.lay variability --gradient-percentile 0.95
 ```
 
 Field range magnification focusing on the middle 30% of values:
 ```bash
-python vtkplot.py input_file.dat layout_file.lay field_range --min-percentile 0.35 --max-percentile 0.65
+python vtkplot.py layout_file.lay field_range --min-percentile 0.35 --max-percentile 0.65
 ```
 
 Bounding box magnification with 10% padding:
 ```bash
-python vtkplot.py input_file.dat layout_file.lay bounding_box --padding-factor 0.10
+python vtkplot.py layout_file.lay bounding_box --padding-factor 0.10
 ```
 
 Mesh refinement magnification focusing on smallest 5% of cells:
 ```bash
-python vtkplot.py input_file.dat layout_file.lay mesh_refinement --percentile-threshold 0.05
+python vtkplot.py layout_file.lay mesh_refinement --percentile-threshold 0.05
 ```
 
 ## Notes on Tecplot View Magnification

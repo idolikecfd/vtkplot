@@ -232,7 +232,7 @@ def apply_to_vtk_camera(camera, tecplot_params):
 
 def parse_tecplot_layout(filename):
     """
-    Parse a Tecplot layout file (.lay) to extract THREEDVIEW parameters.
+    Parse a Tecplot layout file (.lay) to extract THREEDVIEW parameters and data file path.
     
     Parameters:
     -----------
@@ -250,6 +250,7 @@ def parse_tecplot_layout(filename):
         'viewer_position': None,
         'view_width': None,
         'active_fieldmaps': None,  # New parameter
+        'data_file': None,  # Path to the data file
     }
     
     try:
@@ -261,6 +262,18 @@ def parse_tecplot_layout(filename):
             
             for line in f:
                 line = line.strip()
+                
+                # Check for data file path
+                if line.startswith('$!VarSet') and '|LFDSFN1|' in line:
+                    # Extract the file path from the line
+                    # Format: $!VarSet |LFDSFN1| = '"filename.dat"'
+                    parts = line.split('=', 1)
+                    if len(parts) > 1:
+                        # Remove quotes and extra spaces
+                        data_file_str = parts[1].strip()
+                        data_file_str = data_file_str.strip("'\"")
+                        params['data_file'] = data_file_str
+                        print(f"Found data file: {params['data_file']}")
                 
                 # Check for ACTIVEFIELDMAPS
                 if line.startswith('$!ACTIVEFIELDMAPS'):
@@ -329,6 +342,9 @@ def parse_tecplot_layout(filename):
                             
         if params['psi_angle'] is None or params['theta_angle'] is None or params['viewer_position'] is None or params['view_width'] is None:
             print("Warning: Some camera parameters were not found in the layout file.")
+        
+        if params['data_file'] is None:
+            print("Warning: Data file path was not found in the layout file.")
             
         return params
         
@@ -336,29 +352,46 @@ def parse_tecplot_layout(filename):
         print(f"Error parsing Tecplot layout file: {e}")
         return None
 
-def process_tecplot_file(input_file, layout_file, magnification_method='none'):
+def process_tecplot_file(layout_file, magnification_method='none'):
     """
-    Process a Tecplot data file and visualize it using VTK.
+    Process a Tecplot layout file and visualize the referenced data using VTK.
     
     Parameters:
     -----------
-    input_file : str
-        Path to the Tecplot .dat file
     layout_file : str
-        Path to the Tecplot .lay layout file with camera parameters
+        Path to the Tecplot .lay layout file with camera parameters and data file reference
     magnification_method : str, optional
         View magnification method to use (default: 'none')
     """
-    print(f"Processing data file: {input_file}")
     print(f"Using layout file: {layout_file}")
     print(f"Using magnification method: {magnification_method}")
     
     # Parse layout file
-    print(f"Reading camera settings from layout file: {layout_file}")
+    print(f"Reading settings from layout file: {layout_file}")
     tecplot_params = parse_tecplot_layout(layout_file)
     if not tecplot_params:
-        print("Error: Failed to extract camera parameters from layout file.")
+        print("Error: Failed to extract parameters from layout file.")
         sys.exit(1)
+    
+    # Get data file path
+    if not tecplot_params['data_file']:
+        print("Error: No data file path found in layout file.")
+        sys.exit(1)
+    
+    # Resolve data file path relative to layout file directory
+    layout_dir = os.path.dirname(os.path.abspath(layout_file))
+    input_file = os.path.join(layout_dir, tecplot_params['data_file'])
+    
+    if not os.path.exists(input_file):
+        # Try as absolute path
+        input_file = tecplot_params['data_file']
+        if not os.path.exists(input_file):
+            print(f"Error: Data file '{tecplot_params['data_file']}' not found.")
+            print(f"Tried: {os.path.join(layout_dir, tecplot_params['data_file'])}")
+            print(f"And: {tecplot_params['data_file']}")
+            sys.exit(1)
+    
+    print(f"Processing data file: {input_file}")
     
     # Convert Tecplot parameters to VTK camera parameters
     camera_params = tecplot_to_vtk_camera(
@@ -563,9 +596,8 @@ def main():
     # Create the main argument parser
     parser = argparse.ArgumentParser(description='Convert and visualize Tecplot data files using VTK')
     
-    # Add required arguments for all commands
-    parser.add_argument('input_file', type=str, help='Path to the input Tecplot .dat file')
-    parser.add_argument('layout_file', type=str, help='Path to the Tecplot .lay layout file for camera settings')
+    # Add required argument
+    parser.add_argument('layout_file', type=str, help='Path to the Tecplot .lay layout file')
     
     # Create subparsers for different magnification methods
     subparsers = parser.add_subparsers(dest='magnification', 
@@ -620,11 +652,7 @@ def main():
     # Parse the arguments
     args = parser.parse_args()
     
-    # Make sure both files exist
-    if not os.path.isfile(args.input_file):
-        print(f"Error: Input data file '{args.input_file}' does not exist.")
-        sys.exit(1)
-        
+    # Make sure layout file exists
     if not os.path.isfile(args.layout_file):
         print(f"Error: Layout file '{args.layout_file}' does not exist.")
         sys.exit(1)
@@ -660,7 +688,7 @@ def main():
             min_cells_required=args.min_cells)
     
     # Process the Tecplot file with the specified magnification method
-    process_tecplot_file(args.input_file, args.layout_file, args.magnification)
+    process_tecplot_file(args.layout_file, args.magnification)
 
 if __name__ == '__main__':
     main()
