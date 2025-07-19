@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vtkplot"
+version = "1.0.0"
+description = "A VTK-based visualization tool for Tecplot data files with view magnification methods"
+readme = "README.md"
+authors = [
+    {name = "Dmitry Mikushin", email = "dmitry@kernelgen.org"}
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "numpy>=1.20.0",
+    "vtk>=9.0.0",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/idolikecfd/vtkplot"
+"Bug Reports" = "https://github.com/idolikecfd/vtkplot/issues"
+"Source" = "https://github.com/idolikecfd/vtkplot"
+
+[project.scripts]
+vtkplot = "vtkplot.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vtkplot*"]
+
+[tool.setuptools.package-data]
+vtkplot = ["py.typed"]

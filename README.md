@@ -2,21 +2,22 @@
 
 This package provides a VTK-based visualization tool for Tecplot data files with multiple "view magnification" methods that simulate Tecplot 360's automatic view focusing.
 
-## Files
-
-- `vtkplot.py` - Main script for visualizing Tecplot data with VTK
-- Magnification methods:
-  - `statistical_magnification.py` - Uses percentile-based filtering to exclude outliers
-  - `variability_magnification.py` - Focuses on regions with high gradient values
-  - `field_range_magnification.py` - Focuses on specific scalar field value ranges
-  - `bounding_box_magnification.py` - Uses the bounding box of active blocks with optional padding
-  - `mesh_refinement_magnification.py` - Focuses on regions with highest mesh refinement (smallest cells)
+![example](examples/om6.png)
 
 ## Installation
 
-Ensure you have the required dependencies:
+### From source
+
 ```bash
-pip install numpy vtk
+git clone https://github.com/idolikecfd/vtkplot.git
+cd vtkplot
+pip install -e .
+```
+
+### Using pip
+
+```bash
+pip install git+https://https://github.com/idolikecfd/vtkplot.git
 ```
 
 ## Usage
@@ -25,17 +26,17 @@ The script reads a Tecplot layout file (.lay) which contains camera settings and
 
 Basic usage (default: mesh refinement magnification):
 ```bash
-python vtkplot.py layout_file.lay
+vtkplot layout_file.lay
 ```
 
 Specify a different magnification method as a subcommand:
 ```bash
-python vtkplot.py layout_file.lay statistical
+vtkplot layout_file.lay statistical
 ```
 
 To disable magnification:
 ```bash
-python vtkplot.py layout_file.lay none
+vtkplot layout_file.lay none
 ```
 
 **Note:** The layout file should contain a reference to the data file in the format:
@@ -80,34 +81,50 @@ $!VarSet |LFDSFN1| = '"data_file.dat"'
      - `--min-cells` - Minimum cells for refinement region (default: 10)
 
 6. **No Magnification**
-   - Uses standard VTK camera reset without special magnification
+   - Uses standard VTK camera setting without special magnification
    - Syntax: `none`
 
 ## Examples
 
+### Using example data
+
+The package includes example data files in the `examples/` directory:
+
+```bash
+# Run with default mesh refinement magnification
+vtkplot examples/om6.lay
+
+# Try different magnification methods
+vtkplot examples/om6.lay statistical
+vtkplot examples/om6.lay variability
+vtkplot examples/om6.lay none
+```
+
+### Advanced usage
+
 Statistical magnification with 3% outlier cutoff:
 ```bash
-python vtkplot.py layout_file.lay statistical --percentile-cutoff 0.03
+vtkplot layout_file.lay statistical --percentile-cutoff 0.03
 ```
 
 Variability magnification focusing on top 5% of gradients:
 ```bash
-python vtkplot.py layout_file.lay variability --gradient-percentile 0.95
+vtkplot layout_file.lay variability --gradient-percentile 0.95
 ```
 
 Field range magnification focusing on the middle 30% of values:
 ```bash
-python vtkplot.py layout_file.lay field_range --min-percentile 0.35 --max-percentile 0.65
+vtkplot layout_file.lay field_range --min-percentile 0.35 --max-percentile 0.65
 ```
 
 Bounding box magnification with 10% padding:
 ```bash
-python vtkplot.py layout_file.lay bounding_box --padding-factor 0.10
+vtkplot layout_file.lay bounding_box --padding-factor 0.10
 ```
 
 Mesh refinement magnification focusing on smallest 5% of cells:
 ```bash
-python vtkplot.py layout_file.lay mesh_refinement --percentile-threshold 0.05
+vtkplot layout_file.lay mesh_refinement --percentile-threshold 0.05
 ```
 
 ## Notes on Tecplot View Magnification
@@ -121,3 +138,28 @@ The Tecplot 360 "View Magnification" feature automatically focuses the view on t
 5. The mesh refinement approach focuses on areas with the smallest cells (highest refinement), which is particularly useful for CFD simulations where the mesh is refined in critical regions like boundary layers, shock waves, or regions of complex flow
 
 Experiment with different methods to find the one that best replicates the Tecplot 360 behavior for your specific data.
+
+## Package Structure
+
+```
+vtkplot/
+├── pyproject.toml          # Package configuration
+├── README.md               # This file
+├── LICENSE                 # License file
+├── .gitignore              # Git ignore file
+├── examples/               # Example data files
+│   ├── om6.dat            # Example Tecplot data file
+│   ├── om6.lay            # Example Tecplot layout file
+│   └── om6.png            # Example output
+└── vtkplot/                # Main package directory
+    ├── __init__.py         # Package initialization
+    ├── core.py             # Core visualization functionality
+    ├── cli.py              # Command-line interface
+    └── magnification/      # Magnification methods
+        ├── __init__.py
+        ├── statistical.py      # Percentile-based filtering
+        ├── variability.py      # High gradient regions focus
+        ├── field_range.py      # Specific value ranges focus
+        ├── bounding_box.py     # Bounding box with padding
+        └── mesh_refinement.py  # Smallest cells focus
+```
