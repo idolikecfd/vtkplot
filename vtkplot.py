@@ -352,7 +352,7 @@ def parse_tecplot_layout(filename):
         print(f"Error parsing Tecplot layout file: {e}")
         return None
 
-def process_tecplot_file(layout_file, magnification_method='none'):
+def process_tecplot_file(layout_file, magnification_method='mesh_refinement'):
     """
     Process a Tecplot layout file and visualize the referenced data using VTK.
     
@@ -361,7 +361,7 @@ def process_tecplot_file(layout_file, magnification_method='none'):
     layout_file : str
         Path to the Tecplot .lay layout file with camera parameters and data file reference
     magnification_method : str, optional
-        View magnification method to use (default: 'none')
+        View magnification method to use (default: 'mesh_refinement')
     """
     print(f"Using layout file: {layout_file}")
     print(f"Using magnification method: {magnification_method}")
@@ -602,11 +602,11 @@ def main():
     # Create subparsers for different magnification methods
     subparsers = parser.add_subparsers(dest='magnification', 
                                       title='Magnification methods',
-                                      description='Select a view magnification method:',
+                                      description='Select a view magnification method (default: mesh_refinement):',
                                       help='Method to focus view on important data regions')
     
     # Set default value for magnification if no subcommand is provided
-    subparsers.default = 'none'
+    subparsers.default = 'mesh_refinement'
     
     # Create a parser for the "none" command (no magnification)
     none_parser = subparsers.add_parser('none', help='No magnification, standard VTK camera reset')
@@ -643,7 +643,7 @@ def main():
     
     # Create a parser for mesh refinement magnification
     mesh_refinement_parser = subparsers.add_parser('mesh_refinement',
-                                               help='Mesh refinement magnification (focus on smallest cells)')
+                                               help='Mesh refinement magnification (focus on smallest cells) - DEFAULT')
     mesh_refinement_parser.add_argument('--percentile-threshold', type=float, default=0.1,
                                      help='Percentile threshold for cell size (default: 0.1 means smallest 10%)')
     mesh_refinement_parser.add_argument('--min-cells', type=int, default=10,
@@ -682,10 +682,17 @@ def main():
             renderer, active_actors, padding_factor=args.padding_factor)
             
     elif args.magnification == 'mesh_refinement':
+        # For mesh_refinement, check if we have the attributes (from subparser) or use defaults
         original_apply = mesh_refinement_magnification.apply_magnification
-        mesh_refinement_magnification.apply_magnification = lambda renderer, active_actors: original_apply(
-            renderer, active_actors, percentile_threshold=args.percentile_threshold, 
-            min_cells_required=args.min_cells)
+        if hasattr(args, 'percentile_threshold'):
+            # User specified mesh_refinement subcommand with options
+            mesh_refinement_magnification.apply_magnification = lambda renderer, active_actors: original_apply(
+                renderer, active_actors, percentile_threshold=args.percentile_threshold, 
+                min_cells_required=args.min_cells)
+        else:
+            # Default case - no subcommand specified, use default parameters
+            mesh_refinement_magnification.apply_magnification = lambda renderer, active_actors: original_apply(
+                renderer, active_actors, percentile_threshold=0.1, min_cells_required=10)
     
     # Process the Tecplot file with the specified magnification method
     process_tecplot_file(args.layout_file, args.magnification)

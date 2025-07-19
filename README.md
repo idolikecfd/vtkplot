@@ -23,14 +23,19 @@ pip install numpy vtk
 
 The script reads a Tecplot layout file (.lay) which contains camera settings and a reference to the data file (.dat).
 
-Basic usage without magnification:
+Basic usage (default: mesh refinement magnification):
 ```bash
-python vtkplot.py layout_file.lay none
+python vtkplot.py layout_file.lay
 ```
 
-Specify a magnification method as a subcommand:
+Specify a different magnification method as a subcommand:
 ```bash
 python vtkplot.py layout_file.lay statistical
+```
+
+To disable magnification:
+```bash
+python vtkplot.py layout_file.lay none
 ```
 
 **Note:** The layout file should contain a reference to the data file in the format:
@@ -67,7 +72,7 @@ $!VarSet |LFDSFN1| = '"data_file.dat"'
    - Options:
      - `--padding-factor` - Adds padding around bounds (default: 0.05, adds 5% padding)
 
-5. **Mesh Refinement Magnification**
+5. **Mesh Refinement Magnification** (DEFAULT)
    - Focuses on regions with highest mesh refinement (smallest cells)
    - Syntax: `mesh_refinement [options]`
    - Options:
