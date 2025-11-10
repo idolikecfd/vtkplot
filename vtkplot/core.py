@@ -8,6 +8,54 @@ import math
 from . import magnification
 
 
+class KeyPressCallback:
+    """
+    Custom callback class for handling keyboard events in VTK.
+    This allows overriding default VTK key bindings with custom behavior.
+    """
+    def __init__(self, interactor):
+        self.interactor = interactor
+
+    def __call__(self, obj, event):
+        # Get the key that was pressed
+        key = self.interactor.GetKeySym()
+
+        # Handle numeric keys 0-9
+        if key in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']:
+            print(f"Numeric key pressed: {key}")
+            # Add custom behavior here for each key
+            if key == '1':
+                print("  → Key 1: Custom action for key 1")
+            elif key == '2':
+                print("  → Key 2: Custom action for key 2")
+            elif key == '3':
+                print("  → Key 3: Custom action for key 3 (stereo mode disabled)")
+            elif key == '4':
+                print("  → Key 4: Custom action for key 4")
+            elif key == '5':
+                print("  → Key 5: Custom action for key 5")
+            elif key == '6':
+                print("  → Key 6: Custom action for key 6")
+            elif key == '7':
+                print("  → Key 7: Custom action for key 7")
+            elif key == '8':
+                print("  → Key 8: Custom action for key 8")
+            elif key == '9':
+                print("  → Key 9: Custom action for key 9")
+            elif key == '0':
+                print("  → Key 0: Custom action for key 0")
+
+            # Prevent the default VTK behavior by not calling OnKeyPress
+            return
+
+        # For all other keys, let the default interactor style handle them
+        # Get the current interactor style and call its OnKeyPress method
+        style = self.interactor.GetInteractorStyle()
+        if style and hasattr(style, 'OnKeyPress'):
+            style.OnKeyPress()
+            style.OnChar()  # Also call OnChar to ensure proper handling
+
+
 def parse_active_fieldmaps(fieldmaps_str):
     """
     Parse a Tecplot active field maps string into a list of block indices.
@@ -600,6 +648,21 @@ def process_tecplot_file(layout_file, magnification_method='mesh_refinement'):
 
     # 9. Initialize the interactor
     renderWindowInteractor.Initialize()
+
+    # Remove default CharEvent observers from interactor
+    # The interactor processes CharEvent AFTER KeyPressEvent, and this is where
+    # the default key handlers (like stereo toggle on '3') are executed.
+    # By removing CharEvent observers, we prevent the default handling.
+    # Our custom callback will then explicitly call OnChar for non-numeric keys.
+    renderWindowInteractor.RemoveObservers('CharEvent')
+
+    # Add custom key press callback to override default VTK key bindings
+    key_callback = KeyPressCallback(renderWindowInteractor)
+    renderWindowInteractor.AddObserver('KeyPressEvent', key_callback)
+    print("\nCustom keyboard handler installed:")
+    print("  - Numeric keys 0-9 now have custom behavior")
+    print("  - Key '3' stereo mode is disabled")
+    print("  - All other keys work as normal (r=reset, w=wireframe, s=surface, etc.)\n")
 
     # Add axis display
     axes = vtk.vtkAxesActor()
