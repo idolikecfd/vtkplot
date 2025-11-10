@@ -251,6 +251,7 @@ def parse_tecplot_layout(filename):
         'view_width': None,
         'active_fieldmaps': None,  # New parameter
         'data_file': None,  # Path to the data file
+        'legend_header': None,  # Legend title from GLOBALCONTOUR
     }
     
     try:
@@ -259,10 +260,12 @@ def parse_tecplot_layout(filename):
             in_viewer_position = False
             in_center_rotation = False
             in_rotate_origin = False
-            
+            in_globalcontour = False
+            in_legend = False
+
             for line in f:
                 line = line.strip()
-                
+
                 # Check for data file path
                 if line.startswith('$!VarSet') and '|LFDSFN1|' in line:
                     # Extract the file path from the line
@@ -274,7 +277,7 @@ def parse_tecplot_layout(filename):
                         data_file_str = data_file_str.strip("'\"")
                         params['data_file'] = data_file_str
                         print(f"Found data file: {params['data_file']}")
-                
+
                 # Check for ACTIVEFIELDMAPS
                 if line.startswith('$!ACTIVEFIELDMAPS'):
                     parts = line.split('=')
@@ -282,6 +285,31 @@ def parse_tecplot_layout(filename):
                         fieldmaps_str = parts[1].strip()
                         params['active_fieldmaps'] = parse_active_fieldmaps(fieldmaps_str)
                         print(f"Found active fieldmaps: {params['active_fieldmaps']}")
+
+                # Check for first GLOBALCONTOUR (only parse contour 1)
+                if line.startswith('$!GLOBALCONTOUR') and '1' in line and params['legend_header'] is None:
+                    in_globalcontour = True
+                    continue
+
+                # Process GLOBALCONTOUR section
+                if in_globalcontour:
+                    if line.startswith('LEGEND'):
+                        in_legend = True
+                        continue
+                    elif in_legend and line.startswith('HEADER'):
+                        parts = line.split('=')
+                        if len(parts) > 1:
+                            header = parts[1].strip().strip('"')
+                            params['legend_header'] = header
+                            print(f"Found legend header: {params['legend_header']}")
+                            in_legend = False
+                            in_globalcontour = False
+                    elif line.startswith('}') and in_legend:
+                        # LEGEND section ended without HEADER - exit GLOBALCONTOUR parsing
+                        in_legend = False
+                        in_globalcontour = False
+                    elif line.startswith('$!') and not line.startswith('$!GLOBALCONTOUR'):
+                        in_globalcontour = False
                 
                 # Check for THREEDVIEW section
                 if line.startswith('$!THREEDVIEW'):
@@ -561,7 +589,10 @@ def process_tecplot_file(layout_file, magnification_method='mesh_refinement'):
     # Create a color bar / scalar bar for the contour values
     scalar_bar = vtk.vtkScalarBarActor()
     scalar_bar.SetLookupTable(lut)
-    scalar_bar.SetTitle("u velocity")
+    # Set title only if legend header is defined in layout file
+    legend_title = tecplot_params.get('legend_header')
+    if legend_title:
+        scalar_bar.SetTitle(legend_title)
     scalar_bar.SetNumberOfLabels(10)
     scalar_bar.SetPosition(0.8, 0.1)
     scalar_bar.SetPosition2(0.15, 0.8)

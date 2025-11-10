@@ -81,6 +81,7 @@ $!GLOBALCONTOUR  1
   LEGEND
     {
     SHOW = YES
+    HEADER = "u velocity"
     XYPOS
       {
       X = 21.016
