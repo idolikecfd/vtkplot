@@ -8,13 +8,311 @@ import math
 from . import magnification
 
 
+class WorkspaceBar:
+    """
+    A workspace indicator bar in the style of i3wm.
+    Displays workspace buttons at the bottom of the VTK window.
+    """
+    def __init__(self, renderer, num_workspaces=10):
+        self.renderer = renderer
+        self.num_workspaces = num_workspaces
+        self.current_workspace = 0
+        self.actors = []
+        self.text_actors = []
+        self.background_actors = []
+
+        # i3wm color scheme
+        self.focused_bg = (0x28/255.0, 0x55/255.0, 0x77/255.0)  # #285577
+        self.focused_text = (1.0, 1.0, 1.0)  # #ffffff
+        self.inactive_bg = (0x22/255.0, 0x22/255.0, 0x22/255.0)  # #222222
+        self.inactive_text = (0x88/255.0, 0x88/255.0, 0x88/255.0)  # #888888
+        self.border_color = (0x4c/255.0, 0x78/255.0, 0x99/255.0)  # #4c7899
+
+        self._create_bar()
+
+    def _create_bar(self):
+        """Create the workspace bar with buttons for each workspace."""
+        button_width = 0.06
+        button_height = 0.04
+        button_spacing = 0.002
+        bar_height = 0.05
+        start_x = 0.01
+        start_y = 0.01
+
+        for i in range(self.num_workspaces):
+            x_pos = start_x + i * (button_width + button_spacing)
+
+            # Create background for button
+            bg_actor = vtk.vtkActor2D()
+            bg_mapper = vtk.vtkPolyDataMapper2D()
+
+            # Create a rectangle for the button background
+            points = vtk.vtkPoints()
+            points.InsertNextPoint(x_pos, start_y, 0)
+            points.InsertNextPoint(x_pos + button_width, start_y, 0)
+            points.InsertNextPoint(x_pos + button_width, start_y + button_height, 0)
+            points.InsertNextPoint(x_pos, start_y + button_height, 0)
+
+            quad = vtk.vtkCellArray()
+            quad.InsertNextCell(4)
+            quad.InsertCellPoint(0)
+            quad.InsertCellPoint(1)
+            quad.InsertCellPoint(2)
+            quad.InsertCellPoint(3)
+
+            poly_data = vtk.vtkPolyData()
+            poly_data.SetPoints(points)
+            poly_data.SetPolys(quad)
+
+            bg_mapper.SetInputData(poly_data)
+            bg_actor.SetMapper(bg_mapper)
+
+            # Set initial color based on whether this is the current workspace
+            if i == self.current_workspace:
+                bg_actor.GetProperty().SetColor(*self.focused_bg)
+            else:
+                bg_actor.GetProperty().SetColor(*self.inactive_bg)
+
+            self.background_actors.append(bg_actor)
+            self.renderer.AddActor2D(bg_actor)
+
+            # Create text label for workspace number
+            text_actor = vtk.vtkTextActor()
+            text_actor.SetInput(str(i))
+            text_actor.GetTextProperty().SetFontSize(18)
+            text_actor.GetTextProperty().SetBold(True)
+            text_actor.GetTextProperty().SetJustificationToCentered()
+            text_actor.GetTextProperty().SetVerticalJustificationToCentered()
+
+            # Position text in center of button
+            # Convert normalized coords to display coords for text positioning
+            text_actor.GetPositionCoordinate().SetCoordinateSystemToNormalizedViewport()
+            text_actor.GetPositionCoordinate().SetValue(
+                x_pos + button_width/2,
+                start_y + button_height/2
+            )
+
+            # Set text color based on workspace state
+            if i == self.current_workspace:
+                text_actor.GetTextProperty().SetColor(*self.focused_text)
+            else:
+                text_actor.GetTextProperty().SetColor(*self.inactive_text)
+
+            self.text_actors.append(text_actor)
+            self.renderer.AddActor2D(text_actor)
+
+    def switch_workspace(self, workspace_index):
+        """Switch to a different workspace and update the visual appearance."""
+        if workspace_index < 0 or workspace_index >= self.num_workspaces:
+            return
+
+        old_workspace = self.current_workspace
+        self.current_workspace = workspace_index
+
+        # Update old workspace button to inactive style
+        self.background_actors[old_workspace].GetProperty().SetColor(*self.inactive_bg)
+        self.text_actors[old_workspace].GetTextProperty().SetColor(*self.inactive_text)
+
+        # Update new workspace button to focused style
+        self.background_actors[workspace_index].GetProperty().SetColor(*self.focused_bg)
+        self.text_actors[workspace_index].GetTextProperty().SetColor(*self.focused_text)
+
+
+def extract_variable_names(multiblock_data):
+    """
+    Extract variable names from VTK multiblock data.
+
+    Parameters:
+    -----------
+    multiblock_data : vtkMultiBlockDataSet
+        The multiblock dataset from Tecplot reader
+
+    Returns:
+    --------
+    list
+        List of variable names (e.g., ["x", "y", "z", "stress_vm", ...])
+    """
+    # Get the first block to extract variable names
+    for i in range(multiblock_data.GetNumberOfBlocks()):
+        block = multiblock_data.GetBlock(i)
+        if block is not None:
+            point_data = block.GetPointData()
+            num_arrays = point_data.GetNumberOfArrays()
+            var_names = []
+            for j in range(num_arrays):
+                var_names.append(point_data.GetArrayName(j))
+
+            # VTK doesn't include x, y, z in point data arrays (they're used as coordinates)
+            # But Tecplot VAR indices start at 1 and include x, y, z
+            # So we need to prepend x, y, z to match Tecplot VAR indexing:
+            # VAR=1 -> x, VAR=2 -> y, VAR=3 -> z, VAR=4 -> first scalar variable, etc.
+            full_var_names = ["x", "y", "z"] + var_names
+            print(f"Found {len(full_var_names)} variables (including x,y,z coordinates): {full_var_names}")
+            return full_var_names
+
+    # Fallback if no blocks found
+    print("Warning: No blocks found in data, using default variable names")
+    return ["x", "y", "z", "u"]
+
+
+def create_contour_group_actors(block, contour_group, lut, variable_names, is_active=True):
+    """
+    Create VTK actors for all contours in a contour group.
+
+    Parameters:
+    -----------
+    block : vtkDataSet
+        The data block to create contours from
+    contour_group : dict
+        Dictionary with all GLOBALCONTOUR parameters:
+        - 'values': contour level values
+        - 'var': variable index
+        - 'cmin'/'cmax': color map range
+        - 'colorcutoff_min'/'colorcutoff_max': color cutoff range
+        - etc.
+    lut : vtkLookupTable
+        Color lookup table for mapping
+    variable_names : list
+        List of variable names from data file (indexed from 1, where 1=x, 2=y, 3=z, ...)
+    is_active : bool
+        Whether this is an active block
+
+    Returns:
+    --------
+    list
+        List of actors for all contours in the group plus edge and surface actors
+    """
+    actors = []
+    contour_values = contour_group['values']
+
+    # Use COLORCUTOFF for scalar range if available, otherwise use CMIN/CMAX
+    # COLORCUTOFF defines the visible range, while CMIN/CMAX define the full color map range
+    if contour_group.get('colorcutoff_min') is not None and contour_group.get('colorcutoff_max') is not None:
+        scalar_range = (contour_group['colorcutoff_min'], contour_group['colorcutoff_max'])
+    else:
+        scalar_range = (contour_group.get('cmin', 0), contour_group.get('cmax', 1))
+
+    # Get variable name from VAR index (1-based: 1=first variable, etc.)
+    var_index = contour_group.get('var', 1)
+    if var_index and 0 < var_index <= len(variable_names):
+        var_name = variable_names[var_index - 1]  # Convert to 0-based index
+    else:
+        # Fallback to "u" if VAR index is invalid
+        var_name = "u"
+        print(f"Warning: Invalid VAR index {var_index}, using fallback variable 'u'")
+
+    print(f"Using variable '{var_name}' for VAR={var_index}")
+
+    # Create contour filter with ALL values from the group
+    contour = vtk.vtkContourFilter()
+    contour.SetInputData(block)
+    contour.SetInputArrayToProcess(0, 0, 0, vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS, var_name)
+
+    # Add all contour values
+    for idx, value in enumerate(contour_values):
+        contour.SetValue(idx, value)
+
+    contour.Update()
+
+    # Create a mapper for the contour output
+    contour_mapper = vtk.vtkPolyDataMapper()
+    contour_mapper.SetInputConnection(contour.GetOutputPort())
+    contour_mapper.SetScalarRange(scalar_range[0], scalar_range[1])
+    contour_mapper.SetLookupTable(lut)
+
+    # Create a contour actor
+    contour_actor = vtk.vtkActor()
+    contour_actor.SetMapper(contour_mapper)
+    actors.append(contour_actor)
+
+    # Create a mapper for the original dataset (for mesh edges)
+    mapper = vtk.vtkDataSetMapper()
+    mapper.SetInputData(block)
+
+    # Create an actor for edges only
+    edge_actor = vtk.vtkActor()
+    edge_actor.SetMapper(mapper)
+    edge_actor.GetProperty().SetRepresentationToWireframe()
+    edge_actor.GetProperty().SetColor(0, 0, 0)  # Black
+    edge_actor.GetProperty().SetLineWidth(0.1)
+    actors.append(edge_actor)
+
+    # Create surface mapper for flood contour
+    surface_mapper = vtk.vtkDataSetMapper()
+    surface_mapper.SetInputData(block)
+    surface_mapper.SetScalarRange(scalar_range[0], scalar_range[1])
+    surface_mapper.SetScalarModeToUsePointFieldData()
+    surface_mapper.SelectColorArray(var_name)
+    surface_mapper.SetLookupTable(lut)
+
+    # Create surface actor
+    surface_actor = vtk.vtkActor()
+    surface_actor.SetMapper(surface_mapper)
+    surface_actor.GetProperty().SetInterpolationToGouraud()
+    actors.append(surface_actor)
+
+    return actors
+
+
 class KeyPressCallback:
     """
     Custom callback class for handling keyboard events in VTK.
     This allows overriding default VTK key bindings with custom behavior.
     """
-    def __init__(self, interactor):
+    def __init__(self, interactor, workspace_bar, renderer, render_window,
+                 blocks_data, contour_groups, lut, active_fieldmaps,
+                 inactive_actors, scalar_bar, variable_names):
         self.interactor = interactor
+        self.workspace_bar = workspace_bar
+        self.renderer = renderer
+        self.render_window = render_window
+        self.blocks_data = blocks_data  # List of (block, is_active) tuples
+        self.contour_groups = contour_groups  # List of contour group dicts
+        self.lut = lut
+        self.active_fieldmaps = active_fieldmaps
+        self.inactive_actors = inactive_actors
+        self.scalar_bar = scalar_bar  # Scalar bar for legend
+        self.variable_names = variable_names  # List of variable names from data
+        self.current_actors = []  # Currently visible actors
+
+    def dispose_current_contour_group(self):
+        """Remove and dispose current contour group actors."""
+        for actor in self.current_actors:
+            self.renderer.RemoveActor(actor)
+        self.current_actors.clear()
+
+    def create_and_show_contour_group(self, workspace_num):
+        """Create and display all contours for the specified workspace (contour group)."""
+        contour_group = self.contour_groups[workspace_num]
+
+        print(f"Creating CONTOURGROUP {workspace_num} with {len(contour_group['values'])} contours")
+
+        # Update scalar bar for this contour group
+        # Update the lookup table range
+        if contour_group.get('colorcutoff_min') is not None and contour_group.get('colorcutoff_max') is not None:
+            scalar_range = (contour_group['colorcutoff_min'], contour_group['colorcutoff_max'])
+        else:
+            scalar_range = (contour_group.get('cmin', 0), contour_group.get('cmax', 1))
+
+        self.lut.SetTableRange(scalar_range[0], scalar_range[1])
+
+        # Update scalar bar title (clear if no header defined)
+        header = contour_group.get('header')
+        if header:
+            self.scalar_bar.SetTitle(header)
+        else:
+            self.scalar_bar.SetTitle("")  # Clear title if no header
+
+        # Create actors for each block
+        for block, is_active in self.blocks_data:
+            if block is None:
+                continue
+
+            if is_active:
+                actors = create_contour_group_actors(block, contour_group, self.lut, self.variable_names, is_active)
+                for actor in actors:
+                    self.renderer.AddActor(actor)
+                    self.current_actors.append(actor)
 
     def __call__(self, obj, event):
         # Get the key that was pressed
@@ -22,28 +320,25 @@ class KeyPressCallback:
 
         # Handle numeric keys 0-9
         if key in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']:
-            print(f"Numeric key pressed: {key}")
-            # Add custom behavior here for each key
-            if key == '1':
-                print("  → Key 1: Custom action for key 1")
-            elif key == '2':
-                print("  → Key 2: Custom action for key 2")
-            elif key == '3':
-                print("  → Key 3: Custom action for key 3 (stereo mode disabled)")
-            elif key == '4':
-                print("  → Key 4: Custom action for key 4")
-            elif key == '5':
-                print("  → Key 5: Custom action for key 5")
-            elif key == '6':
-                print("  → Key 6: Custom action for key 6")
-            elif key == '7':
-                print("  → Key 7: Custom action for key 7")
-            elif key == '8':
-                print("  → Key 8: Custom action for key 8")
-            elif key == '9':
-                print("  → Key 9: Custom action for key 9")
-            elif key == '0':
-                print("  → Key 0: Custom action for key 0")
+            workspace_num = int(key)
+
+            # Check if this workspace exists
+            if workspace_num < len(self.contour_groups):
+                print(f"Switching to workspace {workspace_num}")
+
+                # Dispose old contour group
+                self.dispose_current_contour_group()
+
+                # Create and show new contour group
+                self.create_and_show_contour_group(workspace_num)
+
+                # Update workspace bar
+                self.workspace_bar.switch_workspace(workspace_num)
+
+                # Render the changes
+                self.render_window.Render()
+            else:
+                print(f"Workspace {workspace_num} does not exist (only {len(self.contour_groups)} workspaces available)")
 
             # Prevent the default VTK behavior by not calling OnKeyPress
             return
@@ -280,26 +575,27 @@ def apply_to_vtk_camera(camera, tecplot_params):
 
 def parse_tecplot_layout(filename):
     """
-    Parse a Tecplot layout file (.lay) to extract THREEDVIEW parameters and data file path.
-    
+    Parse a Tecplot layout file (.lay) to extract THREEDVIEW parameters, data file path, and CONTOURGROUPS.
+
     Parameters:
     -----------
     filename : str
         Path to the Tecplot layout file.
-        
+
     Returns:
     --------
     dict
-        Dictionary containing the parsed parameters.
+        Dictionary containing the parsed parameters including contour_groups list.
     """
     params = {
         'psi_angle': None,
         'theta_angle': None,
         'viewer_position': None,
         'view_width': None,
-        'active_fieldmaps': None,  # New parameter
-        'data_file': None,  # Path to the data file
-        'legend_header': None,  # Legend title from GLOBALCONTOUR
+        'active_fieldmaps': None,
+        'data_file': None,
+        'legend_header': None,
+        'contour_groups': [],  # List of contour groups, each with var, values, cmin, cmax
     }
     
     try:
@@ -310,6 +606,22 @@ def parse_tecplot_layout(filename):
             in_rotate_origin = False
             in_globalcontour = False
             in_legend = False
+            in_contourlevels = False
+            in_rawdata = False
+
+            # Store all GLOBALCONTOUR sections by group number
+            globalcontour_dict = {}
+            current_globalcontour = {}
+            current_contourlevels = {}
+            rawdata_lines = []
+            rawdata_count = 0
+            rawdata_expected = 0
+
+            # Additional states for nested structures
+            in_colorcutoff = False
+            in_colormapfilter = False
+            in_continuouscolor = False
+            in_labels = False
 
             for line in f:
                 line = line.strip()
@@ -334,30 +646,205 @@ def parse_tecplot_layout(filename):
                         params['active_fieldmaps'] = parse_active_fieldmaps(fieldmaps_str)
                         print(f"Found active fieldmaps: {params['active_fieldmaps']}")
 
-                # Check for first GLOBALCONTOUR (only parse contour 1)
-                if line.startswith('$!GLOBALCONTOUR') and '1' in line and params['legend_header'] is None:
-                    in_globalcontour = True
+                # Parse GLOBALCONTOUR sections
+                if line.startswith('$!GLOBALCONTOUR'):
+                    # Save the previous GLOBALCONTOUR if it exists and is a different group
+                    if in_globalcontour and current_globalcontour.get('group') is not None:
+                        prev_group = current_globalcontour['group']
+                        globalcontour_dict[prev_group] = current_globalcontour.copy()
+
+                    # Extract contour group number
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        try:
+                            group_num = int(parts[1])
+
+                            # If this group already exists, merge with existing data
+                            # Otherwise create new entry
+                            if group_num in globalcontour_dict:
+                                # Continue with existing data to merge properties
+                                current_globalcontour = globalcontour_dict[group_num].copy()
+                            else:
+                                # Create new entry with all None values
+                                current_globalcontour = {
+                                    'group': group_num,
+                                    'var': None,
+                                    'cmin': None,
+                                    'cmax': None,
+                                    'header': None,
+                                    'defnumlevels': None,
+                                    'autolevelskip': None,
+                                    'legend_show': None,
+                                    'legend_xypos': None,
+                                    'colorcutoff_min': None,
+                                    'colorcutoff_max': None
+                                }
+
+                            in_globalcontour = True
+                            # Reset nested states
+                            in_legend = False
+                            in_labels = False
+                            in_colorcutoff = False
+                            in_colormapfilter = False
+                            in_continuouscolor = False
+                            # Only save legend header from first contour group
+                            if group_num == 1 and params['legend_header'] is None:
+                                # Will be parsed in the section below
+                                pass
+                        except:
+                            pass
                     continue
 
                 # Process GLOBALCONTOUR section
                 if in_globalcontour:
-                    if line.startswith('LEGEND'):
-                        in_legend = True
-                        continue
-                    elif in_legend and line.startswith('HEADER'):
+                    if line.startswith('VAR'):
                         parts = line.split('=')
                         if len(parts) > 1:
-                            header = parts[1].strip().strip('"')
-                            params['legend_header'] = header
-                            print(f"Found legend header: {params['legend_header']}")
+                            current_globalcontour['var'] = int(parts[1].strip())
+                    elif line.startswith('DEFNUMLEVELS'):
+                        parts = line.split('=')
+                        if len(parts) > 1:
+                            current_globalcontour['defnumlevels'] = int(parts[1].strip())
+                    elif line.startswith('LABELS'):
+                        in_labels = True
+                        continue
+                    elif in_labels:
+                        if line.startswith('AUTOLEVELSKIP'):
+                            parts = line.split('=')
+                            if len(parts) > 1:
+                                current_globalcontour['autolevelskip'] = int(parts[1].strip())
+                        elif line.startswith('}'):
+                            in_labels = False
+                    elif line.startswith('LEGEND'):
+                        in_legend = True
+                        continue
+                    elif in_legend:
+                        if line.startswith('SHOW'):
+                            parts = line.split('=')
+                            if len(parts) > 1:
+                                current_globalcontour['legend_show'] = parts[1].strip().upper() == 'YES'
+                        elif line.startswith('HEADER'):
+                            parts = line.split('=')
+                            if len(parts) > 1:
+                                header = parts[1].strip().strip('"')
+                                current_globalcontour['header'] = header
+                                # Save first contour group header as legend_header
+                                if current_globalcontour.get('group') == 1 and params['legend_header'] is None:
+                                    params['legend_header'] = header
+                                    print(f"Found legend header: {params['legend_header']}")
+                        elif line.startswith('X') and '=' in line:
+                            parts = line.split('=')
+                            if len(parts) > 1 and current_globalcontour['legend_xypos'] is None:
+                                current_globalcontour['legend_xypos'] = [float(parts[1].strip()), 0]
+                        elif line.startswith('Y') and '=' in line:
+                            parts = line.split('=')
+                            if len(parts) > 1 and current_globalcontour['legend_xypos']:
+                                current_globalcontour['legend_xypos'][1] = float(parts[1].strip())
+                        elif line.startswith('}'):
                             in_legend = False
-                            in_globalcontour = False
-                    elif line.startswith('}') and in_legend:
-                        # LEGEND section ended without HEADER - exit GLOBALCONTOUR parsing
-                        in_legend = False
-                        in_globalcontour = False
+                    elif line.startswith('COLORCUTOFF'):
+                        in_colorcutoff = True
+                        continue
+                    elif in_colorcutoff:
+                        if line.startswith('RANGEMIN'):
+                            parts = line.split('=')
+                            if len(parts) > 1:
+                                current_globalcontour['colorcutoff_min'] = float(parts[1].strip())
+                        elif line.startswith('RANGEMAX'):
+                            parts = line.split('=')
+                            if len(parts) > 1:
+                                current_globalcontour['colorcutoff_max'] = float(parts[1].strip())
+                        elif line.startswith('}'):
+                            in_colorcutoff = False
+                    elif line.startswith('COLORMAPFILTER'):
+                        in_colormapfilter = True
+                        continue
+                    elif in_colormapfilter:
+                        if line.startswith('CONTINUOUSCOLOR'):
+                            in_continuouscolor = True
+                            continue
+                        elif in_continuouscolor:
+                            if line.startswith('CMIN'):
+                                parts = line.split('=')
+                                if len(parts) > 1:
+                                    current_globalcontour['cmin'] = float(parts[1].strip())
+                            elif line.startswith('CMAX'):
+                                parts = line.split('=')
+                                if len(parts) > 1:
+                                    current_globalcontour['cmax'] = float(parts[1].strip())
+                            elif line.startswith('}'):
+                                in_continuouscolor = False
+                        elif line.startswith('}') and not in_continuouscolor:
+                            in_colormapfilter = False
                     elif line.startswith('$!') and not line.startswith('$!GLOBALCONTOUR'):
+                        # End of GLOBALCONTOUR section - store it in the dict
+                        if current_globalcontour.get('group') is not None:
+                            globalcontour_dict[current_globalcontour['group']] = current_globalcontour.copy()
                         in_globalcontour = False
+                        in_legend = False
+                        in_labels = False
+                        in_colorcutoff = False
+                        in_colormapfilter = False
+                        in_continuouscolor = False
+
+                # Parse CONTOURLEVELS sections
+                if line.startswith('$!CONTOURLEVELS'):
+                    in_contourlevels = True
+                    current_contourlevels = {}
+                    continue
+
+                if in_contourlevels:
+                    if line.startswith('CONTOURGROUP'):
+                        parts = line.split('=')
+                        if len(parts) > 1:
+                            current_contourlevels['group'] = int(parts[1].strip())
+                    elif line.startswith('RAWDATA'):
+                        in_rawdata = True
+                        rawdata_lines = []
+                        rawdata_count = 0
+                        continue
+                    elif in_rawdata:
+                        # Try to parse as number
+                        try:
+                            if rawdata_count == 0:
+                                # First line is the count
+                                rawdata_expected = int(line)
+                                rawdata_count += 1
+                            else:
+                                # Subsequent lines are values
+                                rawdata_lines.append(float(line))
+                                if len(rawdata_lines) >= rawdata_expected:
+                                    # Finished reading rawdata
+                                    current_contourlevels['values'] = rawdata_lines
+                                    in_rawdata = False
+                                    in_contourlevels = False
+
+                                    # Combine with GLOBALCONTOUR info
+                                    group_num = current_contourlevels.get('group')
+                                    if group_num:
+                                        # Find matching GLOBALCONTOUR data
+                                        globalcontour_data = globalcontour_dict.get(group_num, {})
+                                        group_data = {
+                                            'group': group_num,
+                                            'values': current_contourlevels['values'],
+                                            'var': globalcontour_data.get('var'),
+                                            'cmin': globalcontour_data.get('cmin'),
+                                            'cmax': globalcontour_data.get('cmax'),
+                                            'header': globalcontour_data.get('header'),
+                                            'defnumlevels': globalcontour_data.get('defnumlevels'),
+                                            'autolevelskip': globalcontour_data.get('autolevelskip'),
+                                            'legend_show': globalcontour_data.get('legend_show'),
+                                            'legend_xypos': globalcontour_data.get('legend_xypos'),
+                                            'colorcutoff_min': globalcontour_data.get('colorcutoff_min'),
+                                            'colorcutoff_max': globalcontour_data.get('colorcutoff_max')
+                                        }
+                                        params['contour_groups'].append(group_data)
+                                        print(f"Found CONTOURGROUP {group_num} with {len(rawdata_lines)} levels")
+                        except ValueError:
+                            # Not a number, might be end of section
+                            if line.startswith('$!'):
+                                in_rawdata = False
+                                in_contourlevels = False
                 
                 # Check for THREEDVIEW section
                 if line.startswith('$!THREEDVIEW'):
@@ -416,12 +903,60 @@ def parse_tecplot_layout(filename):
                     elif line.startswith('$!') and not line.startswith('$!THREEDVIEW'):
                         in_threedview = False
                             
+        # After parsing, check for GLOBALCONTOUR sections without CONTOURLEVELS
+        # and generate contour values automatically
+        existing_groups = {g['group'] for g in params['contour_groups']}
+
+        for group_num, globalcontour_data in globalcontour_dict.items():
+            if group_num not in existing_groups:
+                # This GLOBALCONTOUR has no corresponding CONTOURLEVELS
+                # Generate contour values automatically
+                cmin = globalcontour_data.get('cmin')
+                cmax = globalcontour_data.get('cmax')
+
+                # Skip groups without CMIN/CMAX
+                if cmin is None or cmax is None:
+                    print(f"Warning: CONTOURGROUP {group_num} has no CMIN/CMAX, skipping")
+                    continue
+
+                defnumlevels = globalcontour_data.get('defnumlevels', 10)
+
+                if defnumlevels and defnumlevels > 0:
+                    # Generate equally spaced contour values
+                    values = []
+                    for i in range(defnumlevels):
+                        value = cmin + (cmax - cmin) * i / (defnumlevels - 1) if defnumlevels > 1 else cmin
+                        values.append(value)
+                else:
+                    # No DEFNUMLEVELS specified, use default 10 levels
+                    values = [cmin + (cmax - cmin) * i / 9 for i in range(10)]
+
+                group_data = {
+                    'group': group_num,
+                    'values': values,
+                    'var': globalcontour_data.get('var'),
+                    'cmin': cmin,
+                    'cmax': cmax,
+                    'header': globalcontour_data.get('header'),
+                    'defnumlevels': defnumlevels,
+                    'autolevelskip': globalcontour_data.get('autolevelskip'),
+                    'legend_show': globalcontour_data.get('legend_show'),
+                    'legend_xypos': globalcontour_data.get('legend_xypos'),
+                    'colorcutoff_min': globalcontour_data.get('colorcutoff_min'),
+                    'colorcutoff_max': globalcontour_data.get('colorcutoff_max')
+                }
+                params['contour_groups'].append(group_data)
+                print(f"Found CONTOURGROUP {group_num} with {len(values)} auto-generated levels")
+
+        # Sort contour groups by group number
+        params['contour_groups'].sort(key=lambda g: g['group'])
+
         if params['psi_angle'] is None or params['theta_angle'] is None or params['viewer_position'] is None or params['view_width'] is None:
             print("Warning: Some camera parameters were not found in the layout file.")
-        
+
         if params['data_file'] is None:
             print("Warning: Data file path was not found in the layout file.")
-            
+
         return params
         
     except Exception as e:
@@ -499,6 +1034,9 @@ def process_tecplot_file(layout_file, magnification_method='mesh_refinement'):
     print(f"Data type: {multiblock_data.GetClassName()}")
     print(f"Number of blocks: {multiblock_data.GetNumberOfBlocks()}")
 
+    # Extract variable names from the data
+    variable_names = extract_variable_names(multiblock_data)
+
     # Create a lookup table for color mapping (will be used for both active and inactive blocks)
     lut = vtk.vtkLookupTable()
     lut.SetNumberOfColors(256)
@@ -506,83 +1044,96 @@ def process_tecplot_file(layout_file, magnification_method='mesh_refinement'):
     lut.SetSaturationRange(1.0, 1.0)
     lut.SetValueRange(1.0, 1.0)
     lut.Build()
-    
-    # 2. Process each block in the multi-block dataset
+
+    # Get contour groups from parsed layout parameters
+    contour_groups = tecplot_params.get('contour_groups', [])
+
+    if not contour_groups:
+        print("Warning: No CONTOURGROUP data found in layout file, using default values")
+        # Fallback to default values if no contour groups found
+        contour_groups = [{
+            'group': 1,
+            'values': [
+                0.335123736549, 0.344903259539, 0.35468278253, 0.364462305521,
+                0.374241828511, 0.384021351502, 0.393800874493, 0.403580397483,
+                0.413359920474, 0.423139443464, 0.432918966455, 0.442698489446,
+                0.452478012436, 0.462257535427, 0.472037058418, 0.481816581408,
+                0.491596104399, 0.50137562739, 0.51115515038
+            ],
+            'var': 5,
+            'cmin': 0.325344213558,
+            'cmax': 0.520934673371,
+            'header': 'u velocity'
+        }]
+
+    # Store block information for lazy contour group creation
+    blocks_data = []
+
+    print(f"Preparing {len(contour_groups)} contour group workspaces...")
+    for i, group in enumerate(contour_groups):
+        print(f"  Workspace {i}: CONTOURGROUP {group['group']} with {len(group['values'])} contours")
+
+    # 2. Process each block in the multi-block dataset and store block info
     for i in range(multiblock_data.GetNumberOfBlocks()):
         block = multiblock_data.GetBlock(i)
         if block is None:
             print(f"Block {i+1} is None, skipping")
             continue
-        
+
         # Check if the block is active
-        is_active = (tecplot_params.get('active_fieldmaps') is None or 
+        is_active = (tecplot_params.get('active_fieldmaps') is None or
                     (i + 1) in tecplot_params.get('active_fieldmaps'))
-        
+
         if is_active:
             print(f"Processing active block {i+1}, type: {block.GetClassName()}")
         else:
             print(f"Processing inactive block {i+1}, type: {block.GetClassName()}")
-        
-        # Apply contour settings from the Tecplot file
-        contour = vtk.vtkContourFilter()
-        contour.SetInputData(block)
-        
-        # Set up contour values based on Tecplot levels
-        contour_values = [
-            0.335123736549, 0.344903259539, 0.35468278253, 0.364462305521,
-            0.374241828511, 0.384021351502, 0.393800874493, 0.403580397483,
-            0.413359920474, 0.423139443464, 0.432918966455, 0.442698489446,
-            0.452478012436, 0.462257535427, 0.472037058418, 0.481816581408,
-            0.491596104399, 0.50137562739, 0.51115515038
-        ]
-        
-        # Set contour array
-        contour.SetInputArrayToProcess(0, 0, 0, vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS, "u")
-        
-        for value in contour_values:
-            contour.SetValue(contour_values.index(value), value)
-        
-        contour.Update()
-        
-        # Create a mapper for the contour output
-        contour_mapper = vtk.vtkPolyDataMapper()
-        contour_mapper.SetInputConnection(contour.GetOutputPort())
-        contour_mapper.SetScalarRange(0.325344213558, 0.520934673371)  # From CMIN/CMAX in Tecplot layout
-        contour_mapper.SetLookupTable(lut)
-        
-        # Create a contour actor
-        contour_actor = vtk.vtkActor()
-        contour_actor.SetMapper(contour_mapper)
-        
-        # Create a mapper for the original dataset (for mesh edges)
-        mapper = vtk.vtkDataSetMapper()
-        mapper.SetInputData(block)
-        
-        # Create an actor for edges only
-        edge_actor = vtk.vtkActor()
-        edge_actor.SetMapper(mapper)
-        edge_actor.GetProperty().SetRepresentationToWireframe()
-        edge_actor.GetProperty().SetColor(0, 0, 0)  # Black
-        edge_actor.GetProperty().SetLineWidth(0.1)
-        
-        # Create surface mapper for flood contour
-        surface_mapper = vtk.vtkDataSetMapper()
-        surface_mapper.SetInputData(block)
-        surface_mapper.SetScalarRange(0.325344213558, 0.520934673371)
-        surface_mapper.SetScalarModeToUsePointFieldData()
-        surface_mapper.SelectColorArray("u")
-        surface_mapper.SetLookupTable(lut)
-        
-        # Create surface actor
-        surface_actor = vtk.vtkActor()
-        surface_actor.SetMapper(surface_mapper)
-        surface_actor.GetProperty().SetInterpolationToGouraud()
-        
-        # Add actors to the appropriate list
-        if is_active:
-            active_actors.extend([contour_actor, edge_actor, surface_actor])
-        else:
-            inactive_actors.extend([contour_actor, edge_actor, surface_actor])
+
+        # Store block data for later use
+        blocks_data.append((block, is_active))
+
+    # Create actors ONLY for the first workspace (workspace 0 = first contour group)
+    if contour_groups:
+        first_group = contour_groups[0]
+        print(f"\nCreating initial CONTOURGROUP 0 with {len(first_group['values'])} contours...")
+        for block, is_active in blocks_data:
+            if block is None:
+                continue
+
+            if is_active:
+                actors = create_contour_group_actors(block, first_group, lut, variable_names, is_active)
+                active_actors.extend(actors)
+            else:
+                # For inactive blocks, still create surface actors (no contour)
+                scalar_range = (first_group.get('cmin', 0), first_group.get('cmax', 1))
+
+                # Create a mapper for the original dataset (for mesh edges)
+                mapper = vtk.vtkDataSetMapper()
+                mapper.SetInputData(block)
+
+                # Create an actor for edges only
+                edge_actor = vtk.vtkActor()
+                edge_actor.SetMapper(mapper)
+                edge_actor.GetProperty().SetRepresentationToWireframe()
+                edge_actor.GetProperty().SetColor(0, 0, 0)  # Black
+                edge_actor.GetProperty().SetLineWidth(0.1)
+
+                # Create surface mapper for flood contour
+                surface_mapper = vtk.vtkDataSetMapper()
+                surface_mapper.SetInputData(block)
+                surface_mapper.SetScalarRange(scalar_range[0], scalar_range[1])
+                surface_mapper.SetScalarModeToUsePointFieldData()
+                surface_mapper.SelectColorArray("u")
+                surface_mapper.SetLookupTable(lut)
+
+                # Create surface actor
+                surface_actor = vtk.vtkActor()
+                surface_actor.SetMapper(surface_mapper)
+                surface_actor.GetProperty().SetInterpolationToGouraud()
+
+                inactive_actors.extend([edge_actor, surface_actor])
+
+    print(f"Created {len(active_actors)} active actors for initial workspace")
 
     # 3. Set up the renderer and render window
     renderer = vtk.vtkRenderer()
@@ -590,20 +1141,20 @@ def process_tecplot_file(layout_file, magnification_method='mesh_refinement'):
     renderWindow.AddRenderer(renderer)
     renderWindow.SetSize(800, 800)
 
-    # 4. First add all ACTIVE actors
+    # 4. Add only the ACTIVE actors from first workspace to renderer
     print(f"Adding {len(active_actors)} active actors to renderer")
     for actor in active_actors:
         renderer.AddActor(actor)
-    
+
     # 5. Set up the camera
     camera = renderer.GetActiveCamera()
     apply_to_vtk_camera(camera, camera_params)
-    
-    # 6. Reset the camera to fit all ACTIVE actors
+
+    # 6. Reset the camera to fit all ACTIVE actors from first workspace
     if active_actors:
         print("Resetting camera to fit active actors")
         renderer.ResetCamera()
-        
+
         # Apply the selected magnification method if not 'none'
         if magnification_method != 'none':
             print(f"Applying {magnification_method} magnification...")
@@ -619,7 +1170,7 @@ def process_tecplot_file(layout_file, magnification_method='mesh_refinement'):
                 magnification.mesh_refinement.apply_magnification(renderer, active_actors)
             else:
                 raise ValueError(f"Unknown magnification method: {magnification_method}")
-    
+
     # 7. Now add all INACTIVE actors without resetting the camera
     print(f"Adding {len(inactive_actors)} inactive actors to renderer (without resetting camera)")
     for actor in inactive_actors:
@@ -646,6 +1197,11 @@ def process_tecplot_file(layout_file, magnification_method='mesh_refinement'):
     scalar_bar.SetPosition2(0.15, 0.8)
     renderer.AddActor2D(scalar_bar)
 
+    # Create workspace bar in i3wm style
+    num_workspaces = min(len(contour_groups), 10)  # Limit to 10 for keys 0-9
+    workspace_bar = WorkspaceBar(renderer, num_workspaces)
+    print(f"\nWorkspace bar created with {num_workspaces} CONTOURGROUP workspaces")
+
     # 9. Initialize the interactor
     renderWindowInteractor.Initialize()
 
@@ -657,10 +1213,25 @@ def process_tecplot_file(layout_file, magnification_method='mesh_refinement'):
     renderWindowInteractor.RemoveObservers('CharEvent')
 
     # Add custom key press callback to override default VTK key bindings
-    key_callback = KeyPressCallback(renderWindowInteractor)
+    key_callback = KeyPressCallback(
+        renderWindowInteractor,
+        workspace_bar,
+        renderer,
+        renderWindow,
+        blocks_data,
+        contour_groups,
+        lut,
+        tecplot_params.get('active_fieldmaps'),
+        inactive_actors,
+        scalar_bar,
+        variable_names
+    )
+    # Store initial actors in the callback
+    key_callback.current_actors = active_actors.copy()
+
     renderWindowInteractor.AddObserver('KeyPressEvent', key_callback)
-    print("\nCustom keyboard handler installed:")
-    print("  - Numeric keys 0-9 now have custom behavior")
+    print("Custom keyboard handler installed:")
+    print(f"  - Numeric keys 0-{num_workspaces-1} switch between CONTOURGROUP workspaces")
     print("  - Key '3' stereo mode is disabled")
     print("  - All other keys work as normal (r=reset, w=wireframe, s=surface, etc.)\n")
 
