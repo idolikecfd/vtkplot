@@ -296,12 +296,19 @@ class KeyPressCallback:
 
         self.lut.SetTableRange(scalar_range[0], scalar_range[1])
 
-        # Update scalar bar title (clear if no header defined)
+        # Update scalar bar title
+        # Use HEADER if defined, otherwise use variable name
         header = contour_group.get('header')
         if header:
             self.scalar_bar.SetTitle(header)
         else:
-            self.scalar_bar.SetTitle("")  # Clear title if no header
+            # Get variable name from VAR index
+            var_index = contour_group.get('var', 1)
+            if var_index and 0 < var_index <= len(self.variable_names):
+                var_name = self.variable_names[var_index - 1]
+                self.scalar_bar.SetTitle(var_name)
+            else:
+                self.scalar_bar.SetTitle("")  # Clear if no header and invalid VAR
 
         # Create actors for each block
         for block, is_active in self.blocks_data:
